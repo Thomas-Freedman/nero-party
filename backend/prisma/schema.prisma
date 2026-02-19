@@ -7,4 +7,134 @@ datasource db {
   url      = "file:./dev.db"
 }
 
-// Design your schema here
+model Party {
+  id               String      @id @default(cuid())
+  code             String      @unique
+  name             String
+  status           String      @default("LOBBY")
+
+  // Host Config
+  maxQueueLength   Int?
+  maxSongsPerUser  Int?        // queued songs per user
+  timeLimitSec     Int?        // party length
+  crateSize        Int         @default(5)
+
+  createdAt        DateTime    @default(now())
+  startedAt        DateTime?
+  endedAt          DateTime?
+
+  // Playback Sync
+  currentQueueItemId String?
+  currentStartedAt   DateTime?
+
+  participants     Participant[]
+  tracks           Track[]
+  queue            QueueItem[]
+  kickVotes        KickVote[]
+}
+
+// Participant data
+model Participant {
+  id         String   @id @default(cuid())
+  partyId    String
+  name       String
+  isHost     Boolean  @default(false)
+  joinedAt   DateTime @default(now())
+  socketId   String?
+
+  party      Party    @relation(fields: [partyId], references: [id])
+
+  addedQueueItems QueueItem[] @relation("AddedBy")
+  crateEntries    CrateEntry[]
+  kickVotes       KickVote[]
+
+  @@index([partyId])
+}
+
+// Track data
+model Track {
+  id          String   @id @default(cuid())
+  partyId     String
+
+  provider    String   // "youtube"
+  providerId  String   // youtube videoId
+
+  title       String
+  artist      String?
+  artworkUrl  String?
+  durationSec Int?
+
+  createdAt   DateTime @default(now())
+
+  party       Party    @relation(fields: [partyId], references: [id])
+  queueItems  QueueItem[]
+
+  // prevent duplicates in the party-wide track pool
+  @@unique([partyId, provider, providerId])
+  @@index([partyId])
+}
+
+// Queue item (separate from track)
+model QueueItem {
+  id          String     @id @default(cuid())
+  partyId     String
+  trackId     String
+  addedById   String
+  position    Int
+  status      String     @default("QUEUED")
+
+  createdAt   DateTime   @default(now())
+  startedAt   DateTime?
+  endedAt     DateTime?
+
+  party       Party       @relation(fields: [partyId], references: [id])
+  track       Track       @relation(fields: [trackId], references: [id])
+  addedBy     Participant @relation("AddedBy", fields: [addedById], references: [id])
+
+  crateEntries CrateEntry[]
+  kickVotes    KickVote[]
+
+  // disallow same track twice in queue
+  @@unique([partyId, trackId])
+  @@index([partyId, position])
+}
+
+// Participant's crate
+model CrateEntry {
+  id            String   @id @default(cuid())
+  participantId String
+  queueItemId   String
+  rank          Int      // 1..crateSize
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  participant   Participant @relation(fields: [participantId], references: [id])
+  queueItem     QueueItem   @relation(fields: [queueItemId], references: [id])
+
+  // one item per rank slot per participant
+  @@unique([participantId, rank])
+
+  // prevent putting the same queue item in multiple ranks for same participant
+  @@unique([participantId, queueItemId])
+
+  @@index([participantId])
+}
+
+// Votekick song from queue mechanic 
+model KickVote {
+  id            String   @id @default(cuid())
+  partyId       String
+  queueItemId   String
+  participantId String
+  createdAt     DateTime @default(now())
+
+  party         Party       @relation(fields: [partyId], references: [id])
+  queueItem     QueueItem   @relation(fields: [queueItemId], references: [id])
+  participant   Participant @relation(fields: [participantId], references: [id])
+
+  // one vote per participant per item
+  @@unique([queueItemId, participantId])
+
+  @@index([partyId])
+  @@index([queueItemId])
+}
